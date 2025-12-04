@@ -5,12 +5,12 @@ on:
   push:
     branches:
       - main
-      - dev
+      - developpeur
       - 'feature/**'
   pull_request:
     branches:
       - main
-      - dev
+      - developpeur
 
 env:
   IMAGE_NAME: demo-devops
@@ -100,13 +100,13 @@ jobs:
     needs: build-and-test
     runs-on: ubuntu-latest
     # Ce job s'exécute SEULEMENT sur la branche dev
-    if: github.ref == 'refs/heads/dev' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/developpeur' && github.event_name == 'push'
     
     steps:
     - name: 📢 Notification Dev
       run: |
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo "✅ ENVIRONNEMENT DEV MIS À JOUR"
-        echo "🌿 Branche: dev"
+        echo "🌿 Branche: developpeur"
         echo "📝 Prêt pour merge vers main"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
