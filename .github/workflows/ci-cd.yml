@@ -1,15 +1,18 @@
-name: CI/CD - Docker Hub
+name: CI/CD - Image Docker
 
 on:
   push:
     branches:
       - main
       - developpeur
-      - 'feature/**'
   pull_request:
     branches:
       - main
       - developpeur
+
+permissions:
+  contents: read
+  packages: write
 
 jobs:
   build-and-test:
@@ -23,7 +26,7 @@ jobs:
     - name: Informations
       run: |
         echo "========================================="
-        echo "🐳 CRÉATION DE L'IMAGE DOCKER"
+        echo "🐳 CRÉATION IMAGE DOCKER"
         echo "Branche: ${{ github.ref_name }}"
         echo "========================================="
     
@@ -40,8 +43,8 @@ jobs:
         docker stop test && docker rm test
         echo "✅ Tests réussis!"
 
-  publish-to-dockerhub:
-    name: Publier sur Docker Hub
+  publish-image:
+    name: Publier l'image Docker
     needs: build-and-test
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
@@ -50,47 +53,37 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v3
     
-    - name: Login to Docker Hub
+    - name: Login to GHCR
       uses: docker/login-action@v2
       with:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_TOKEN }}
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     
     - name: Build and Push
       run: |
         echo "========================================="
-        echo "📤 PUBLICATION SUR DOCKER HUB"
+        echo "📤 PUBLICATION DE L'IMAGE"
         echo "========================================="
         
-        docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/demo-devops:latest .
-        docker tag ${{ secrets.DOCKERHUB_USERNAME }}/demo-devops:latest ${{ secrets.DOCKERHUB_USERNAME }}/demo-devops:${{ github.sha }}
+        IMAGE_NAME=ghcr.io/${{ github.repository_owner }}/demo-devops
         
-        docker push ${{ secrets.DOCKERHUB_USERNAME }}/demo-devops:latest
-        docker push ${{ secrets.DOCKERHUB_USERNAME }}/demo-devops:${{ github.sha }}
+        docker build -t $IMAGE_NAME:latest .
+        docker push $IMAGE_NAME:latest
         
         echo "✅ Image publiée!"
     
-    - name: Résumé
+    - name: Instructions d'utilisation
       run: |
         echo "========================================="
-        echo "🎉 IMAGE DISPONIBLE SUR DOCKER HUB"
+        echo "🎉 IMAGE DOCKER DISPONIBLE"
         echo "========================================="
         echo ""
-        echo "📍 Lien: https://hub.docker.com/r/${{ secrets.DOCKERHUB_USERNAME }}/demo-devops"
+        echo "📥 Pour télécharger dans Docker Desktop:"
+        echo "   docker pull ghcr.io/${{ github.repository_owner }}/demo-devops:latest"
         echo ""
-        echo "📥 Pour télécharger:"
-        echo "   docker pull ${{ secrets.DOCKERHUB_USERNAME }}/demo-devops:latest"
+        echo "🚀 Pour lancer le site:"
+        echo "   docker run -d -p 8080:80 ghcr.io/${{ github.repository_owner }}/demo-devops:latest"
         echo ""
-        echo "🚀 Pour utiliser:"
-        echo "   docker run -d -p 80:80 ${{ secrets.DOCKERHUB_USERNAME }}/demo-devops:latest"
+        echo "🌐 Puis ouvrir: http://localhost:8080"
         echo "========================================="
-
-  dev-notification:
-    name: Tests Developpeur
-    needs: build-and-test
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/developpeur' && github.event_name == 'push'
-    
-    steps:
-    - name: Notification
-      run: echo "✅ Tests réussis sur developpeur"
