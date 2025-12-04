@@ -1,6 +1,6 @@
-
 name: CI/CD Multi-Branches
 
+# Déclencher le workflow sur push et pull request
 on:
   push:
     branches:
@@ -12,101 +12,119 @@ on:
       - main
       - developpeur
 
-env:
-  IMAGE_NAME: demo-devops
+# PERMISSIONS NÉCESSAIRES pour GHCR
+permissions:
+  contents: read      # Lire le code du repository
+  packages: write     # Écrire dans GitHub Container Registry
 
 jobs:
-  # JOB 1 : Build et Test (pour toutes les branches)
+  # JOB 1: Construire et tester avec Docker
   build-and-test:
     name: Build & Test
     runs-on: ubuntu-latest
     
     steps:
-    - name: 📥 Checkout du code
+    - name: Checkout du code
       uses: actions/checkout@v3
     
-    - name: 🔍 Afficher la branche
+    - name: Afficher les informations
       run: |
-        echo "🌿 Branche: ${{ github.ref_name }}"
-        echo "📝 Commit: ${{ github.sha }}"
+        echo "========================================="
+        echo "Branche: ${{ github.ref_name }}"
+        echo "Commit: ${{ github.sha }}"
+        echo "========================================="
     
-    - name: 🐳 Build de l'image Docker
+    - name: Build de l'image Docker
       run: |
-        docker build -t ${{ env.IMAGE_NAME }}:${{ github.ref_name }} .
-        echo "✅ Image construite: ${{ env.IMAGE_NAME }}:${{ github.ref_name }}"
+        echo "Construction de l'image Docker..."
+        docker build -t demo-devops:${{ github.ref_name }} .
+        echo "✅ Image construite avec succès"
     
-    - name: 🧪 Test du conteneur
+    - name: Test du conteneur
       run: |
-        echo "🚀 Démarrage du conteneur..."
-        docker run -d -p 8080:80 --name test-container ${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+        echo "Démarrage du conteneur..."
+        docker run -d -p 8080:80 --name test-container demo-devops:${{ github.ref_name }}
         sleep 5
         
-        echo "🔎 Vérification du site..."
-        curl -f http://localhost:8080 | grep "Pipeline DevOps"
+        echo "Test de connexion au site..."
+        curl -f http://localhost:8080
         
-        echo "🧹 Nettoyage..."
+        echo "Arrêt du conteneur..."
         docker stop test-container
         docker rm test-container
         
         echo "✅ Tests réussis!"
     
-    - name: ✅ Résumé Build & Test
+    - name: Résumé des tests
       run: |
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "========================================="
         echo "✅ BUILD & TEST RÉUSSIS"
-        echo "🌿 Branche: ${{ github.ref_name }}"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "Branche: ${{ github.ref_name }}"
+        echo "========================================="
 
-  # JOB 2 : Deploy to Docker Hub (UNIQUEMENT pour main)
-  deploy-production:
-    name: Deploy to Production
+  # JOB 2: Publier sur GitHub Container Registry (uniquement sur main)
+  deploy-to-ghcr:
+    name: Publier sur GitHub Registry
     needs: build-and-test
     runs-on: ubuntu-latest
-    # ⚠️ Ce job s'exécute SEULEMENT sur la branche main
+    # Ce job s'exécute SEULEMENT quand on push sur main
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     
     steps:
-    - name: 📥 Checkout du code
+    - name: Checkout du code
       uses: actions/checkout@v3
     
-    - name: 🔑 Login to Docker Hub
+    - name: Login to GitHub Container Registry
       uses: docker/login-action@v2
       with:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_TOKEN }}
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     
-    - name: 🐳 Build de l'image de production
+    - name: Build et Push vers GHCR
       run: |
-        docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest .
-        docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }} .
+        echo "Construction de l'image pour production..."
+        IMAGE_NAME=ghcr.io/${{ github.repository_owner }}/demo-devops
+        
+        docker build -t $IMAGE_NAME:latest .
+        docker build -t $IMAGE_NAME:${{ github.sha }} .
+        
+        echo "Publication vers GitHub Container Registry..."
+        docker push $IMAGE_NAME:latest
+        docker push $IMAGE_NAME:${{ github.sha }}
+        
+        echo "✅ Images publiées avec succès!"
     
-    - name: 📤 Push vers Docker Hub
+    - name: Résumé du déploiement
       run: |
-        docker push ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
-        docker push ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-        echo "✅ Image publiée sur Docker Hub!"
-    
-    - name: 🎉 Résumé Déploiement
-      run: |
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo "🎉 DÉPLOIEMENT EN PRODUCTION RÉUSSI"
-        echo "🐳 Image: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest"
-        echo "📦 Tag: ${{ github.sha }}"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "========================================="
+        echo "🎉 IMAGE DOCKER PUBLIÉE"
+        echo "========================================="
+        echo "Registry: GitHub Container Registry"
+        echo "Image: ghcr.io/${{ github.repository_owner }}/demo-devops"
+        echo ""
+        echo "Tags disponibles:"
+        echo "  • latest"
+        echo "  • ${{ github.sha }}"
+        echo ""
+        echo "Pour utiliser l'image:"
+        echo "  docker pull ghcr.io/${{ github.repository_owner }}/demo-devops:latest"
+        echo "  docker run -d -p 80:80 ghcr.io/${{ github.repository_owner }}/demo-devops:latest"
+        echo "========================================="
 
-  # JOB 3 : Notification pour dev
+  # JOB 3: Notification pour la branche developpeur
   dev-notification:
-    name: Dev Environment Ready
+    name: Environnement Dev
     needs: build-and-test
     runs-on: ubuntu-latest
-    # Ce job s'exécute SEULEMENT sur la branche dev
+    # Ce job s'exécute SEULEMENT sur la branche developpeur
     if: github.ref == 'refs/heads/developpeur' && github.event_name == 'push'
     
     steps:
-    - name: 📢 Notification Dev
+    - name: Notification
       run: |
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo "✅ ENVIRONNEMENT DEV MIS À JOUR"
-        echo "🌿 Branche: developpeur"
-        echo "📝 Prêt pour merge vers main"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "========================================="
+        echo "✅ TESTS RÉUSSIS SUR DEVELOPPEUR"
+        echo "Branche developpeur testée et validée"
+        echo "Prêt pour merge vers main"
+        echo "========================================"
