@@ -14,11 +14,18 @@ permissions:
   contents: read
   packages: write
 
+env:
+  DOCKER_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/demo-devops
+  TERRAFORM_VERSION: '1.6.0'
+
 jobs:
   # JOB 1: Build et Test Docker
   build-and-test:
     name: Build & Test Docker
     runs-on: ubuntu-latest
+    
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
     
     steps:
     - name: Checkout
@@ -29,20 +36,46 @@ jobs:
         echo "========================================="
         echo "🐳 BUILD & TEST DOCKER"
         echo "Branche: ${{ github.ref_name }}"
+        echo "Commit: ${{ github.sha }}"
         echo "========================================="
     
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Docker meta
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.DOCKER_IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=sha,prefix={{branch}}-
+    
     - name: Build Docker image
-      run: |
-        docker build -t demo-devops:${{ github.ref_name }} .
-        echo "✅ Image créée"
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        load: true
+        tags: demo-devops:test
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
     
     - name: Test du conteneur
       run: |
-        docker run -d -p 8080:80 --name test demo-devops:${{ github.ref_name }}
+        echo "Démarrage du conteneur de test..."
+        docker run -d -p 8080:80 --name test demo-devops:test
         sleep 5
-        curl -f http://localhost:8080
+        
+        echo "Test de connectivité..."
+        if curl -f http://localhost:8080; then
+          echo "✅ Tests réussis"
+        else
+          echo "❌ Tests échoués"
+          docker logs test
+          exit 1
+        fi
+        
         docker stop test && docker rm test
-        echo "✅ Tests réussis"
 
   # JOB 2: Publier l'image Docker
   publish-image:
@@ -51,9 +84,15 @@ jobs:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+    
     steps:
     - name: Checkout
       uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
     
     - name: Login to GHCR
       uses: docker/login-action@v3
@@ -62,12 +101,32 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
     
+    - name: Docker meta
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.DOCKER_IMAGE_NAME }}
+        tags: |
+          type=raw,value=latest
+          type=sha,prefix=sha-
+          type=ref,event=branch
+    
     - name: Build and Push
+      id: build
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+    
+    - name: Success Message
       run: |
-        IMAGE_NAME=ghcr.io/${{ github.repository_owner }}/demo-devops
-        docker build -t $IMAGE_NAME:latest .
-        docker push $IMAGE_NAME:latest
         echo "✅ Image publiée sur GHCR"
+        echo "📦 Tags: ${{ steps.meta.outputs.tags }}"
+        echo "🔐 Digest: ${{ steps.build.outputs.digest }}"
 
   # JOB 3: Terraform Validation
   terraform-validate:
@@ -76,6 +135,10 @@ jobs:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/developpeur'
     
+    defaults:
+      run:
+        working-directory: ./terraform
+    
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -83,18 +146,24 @@ jobs:
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
       with:
-        terraform_version: 1.6.0
+        terraform_version: ${{ env.TERRAFORM_VERSION }}
     
     - name: Terraform Format Check
-      working-directory: ./terraform
+      id: fmt
       run: |
         echo "========================================="
         echo "📝 VÉRIFICATION DU FORMATAGE"
         echo "========================================="
-        terraform fmt -check -recursive || echo "⚠️  Fichiers non formatés détectés"
+        if terraform fmt -check -recursive; then
+          echo "✅ Formatage correct"
+        else
+          echo "⚠️  Fichiers non formatés détectés"
+          echo "💡 Exécutez: terraform fmt -recursive"
+          exit 1
+        fi
+      continue-on-error: false
     
     - name: Terraform Init
-      working-directory: ./terraform
       run: |
         echo "========================================="
         echo "🔧 INITIALISATION TERRAFORM"
@@ -102,10 +171,9 @@ jobs:
         terraform init
     
     - name: Terraform Validate
-      working-directory: ./terraform
       run: |
         echo "Validation de la configuration Terraform..."
-        terraform validate
+        terraform validate -no-color
         echo "✅ Configuration valide"
 
   # JOB 4: Terraform Plan
@@ -115,6 +183,10 @@ jobs:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     
+    defaults:
+      run:
+        working-directory: ./terraform
+    
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -122,19 +194,20 @@ jobs:
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
       with:
-        terraform_version: 1.6.0
+        terraform_version: ${{ env.TERRAFORM_VERSION }}
     
     - name: Terraform Init
-      working-directory: ./terraform
       run: terraform init
     
     - name: Terraform Plan
-      working-directory: ./terraform
       run: |
         echo "========================================="
         echo "📋 PLANIFICATION TERRAFORM"
         echo "========================================="
-        terraform plan -out=tfplan
+        terraform plan \
+          -var="docker_image=${{ env.DOCKER_IMAGE_NAME }}:latest" \
+          -out=tfplan \
+          -no-color
         echo "✅ Plan créé avec succès"
     
     - name: Upload Plan Artifact
@@ -144,12 +217,16 @@ jobs:
         path: terraform/tfplan
         retention-days: 5
 
-  # JOB 5: Afficher le plan (sans appliquer - pour le TP)
+  # JOB 5: Afficher le plan
   terraform-show-plan:
     name: Afficher Plan Terraform
     needs: terraform-plan
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    defaults:
+      run:
+        working-directory: ./terraform
     
     steps:
     - name: Checkout
@@ -158,10 +235,9 @@ jobs:
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
       with:
-        terraform_version: 1.6.0
+        terraform_version: ${{ env.TERRAFORM_VERSION }}
     
     - name: Terraform Init
-      working-directory: ./terraform
       run: terraform init
     
     - name: Download Plan
@@ -171,12 +247,11 @@ jobs:
         path: terraform/
     
     - name: Show Plan
-      working-directory: ./terraform
       run: |
         echo "========================================="
         echo "📊 DÉTAILS DU PLAN TERRAFORM"
         echo "========================================="
-        terraform show tfplan
+        terraform show -no-color tfplan
         echo ""
         echo "========================================="
         echo "ℹ️  NOTE: Le plan est créé mais PAS appliqué"
@@ -203,19 +278,19 @@ jobs:
         echo "✅ 4. Plan Terraform - RÉUSSI"
         echo ""
         echo "📦 Image Docker:"
-        echo "   ghcr.io/${{ github.repository_owner }}/demo-devops:latest"
+        echo "   ${{ env.DOCKER_IMAGE_NAME }}:latest"
         echo ""
         echo "🏗️  Infrastructure Terraform:"
         echo "   Configuration validée et plan créé"
         echo ""
         echo "📥 Pour utiliser l'image localement:"
-        echo "   docker pull ghcr.io/${{ github.repository_owner }}/demo-devops:latest"
-        echo "   docker run -d -p 8080:80 ghcr.io/${{ github.repository_owner }}/demo-devops:latest"
+        echo "   docker pull ${{ env.DOCKER_IMAGE_NAME }}:latest"
+        echo "   docker run -d -p 8080:80 ${{ env.DOCKER_IMAGE_NAME }}:latest"
         echo ""
         echo "🚀 Pour déployer avec Terraform (local):"
         echo "   cd terraform"
         echo "   terraform init"
-        echo "   terraform plan"
+        echo "   terraform plan -var=\"docker_image=${{ env.DOCKER_IMAGE_NAME }}:latest\""
         echo "   terraform apply"
         echo ""
         echo "========================================="
@@ -235,5 +310,5 @@ jobs:
         echo "✅ Docker: Build & Test OK"
         echo "✅ Terraform: Validation OK"
         echo ""
-        echo "Prêt pour merge vers main"
-        echo "========================================"
+        echo "📝 Prêt pour merge vers main"
+        echo "========================================="
