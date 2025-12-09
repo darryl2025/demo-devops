@@ -7,8 +7,8 @@ terraform {
 
   required_providers {
     docker = {
-      source  = "terraform-providers/docker"
-      version = "~> 3.0"
+      source  = "kreuzwerker/docker"
+      version = "3.0.2"
     }
   }
 
@@ -23,7 +23,7 @@ terraform {
 
 provider "docker" {
   host = "unix:///var/run/docker.sock"  # Linux/GitHub Actions
-  # host = "npipe:////./pipe/docker_engine"  # Windows (décommentez si local Windows)
+  # host = "npipe:////./pipe/docker_engine"  # Windows (décommenter si local)
 }
 
 ##############################################
