@@ -22,7 +22,7 @@ jobs:
     
     steps:
     - name: Checkout
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
     
     - name: Informations
       run: |
@@ -53,10 +53,10 @@ jobs:
     
     steps:
     - name: Checkout
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
     
     - name: Login to GHCR
-      uses: docker/login-action@v2
+      uses: docker/login-action@v3
       with:
         registry: ghcr.io
         username: ${{ github.actor }}
@@ -69,21 +69,29 @@ jobs:
         docker push $IMAGE_NAME:latest
         echo "✅ Image publiée sur GHCR"
 
-  # JOB 3: Terraform Plan
-  terraform-plan:
-    name: Terraform Plan
-    needs: publish-image
+  # JOB 3: Terraform Validation
+  terraform-validate:
+    name: Terraform Validation
+    needs: build-and-test
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/developpeur'
     
     steps:
     - name: Checkout
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
     
     - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v2
+      uses: hashicorp/setup-terraform@v3
       with:
         terraform_version: 1.6.0
+    
+    - name: Terraform Format Check
+      working-directory: ./terraform
+      run: |
+        echo "========================================="
+        echo "📝 VÉRIFICATION DU FORMATAGE"
+        echo "========================================="
+        terraform fmt -check -recursive || echo "⚠️  Fichiers non formatés détectés"
     
     - name: Terraform Init
       working-directory: ./terraform
@@ -93,49 +101,62 @@ jobs:
         echo "========================================="
         terraform init
     
-    - name: Terraform Format Check
-      working-directory: ./terraform
-      run: |
-        echo "Vérification du formatage..."
-        terraform fmt -check || echo "⚠️  Fichiers non formatés"
-    
     - name: Terraform Validate
       working-directory: ./terraform
       run: |
-        echo "Validation de la configuration..."
+        echo "Validation de la configuration Terraform..."
         terraform validate
         echo "✅ Configuration valide"
+
+  # JOB 4: Terraform Plan
+  terraform-plan:
+    name: Terraform Plan
+    needs: [publish-image, terraform-validate]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: 1.6.0
+    
+    - name: Terraform Init
+      working-directory: ./terraform
+      run: terraform init
     
     - name: Terraform Plan
       working-directory: ./terraform
       run: |
         echo "========================================="
-        echo "📋 PLAN TERRAFORM"
+        echo "📋 PLANIFICATION TERRAFORM"
         echo "========================================="
         terraform plan -out=tfplan
-        echo "✅ Plan créé"
+        echo "✅ Plan créé avec succès"
     
-    - name: Upload Plan
-      uses: actions/upload-artifact@v3
+    - name: Upload Plan Artifact
+      uses: actions/upload-artifact@v4
       with:
         name: terraform-plan
         path: terraform/tfplan
+        retention-days: 5
 
-  # JOB 4: Terraform Apply (déploiement)
-  terraform-apply:
-    name: Terraform Apply
+  # JOB 5: Afficher le plan (sans appliquer - pour le TP)
+  terraform-show-plan:
+    name: Afficher Plan Terraform
     needs: terraform-plan
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    environment:
-      name: production
     
     steps:
     - name: Checkout
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
     
     - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v2
+      uses: hashicorp/setup-terraform@v3
       with:
         terraform_version: 1.6.0
     
@@ -144,32 +165,28 @@ jobs:
       run: terraform init
     
     - name: Download Plan
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         name: terraform-plan
         path: terraform/
     
-    - name: Terraform Apply
+    - name: Show Plan
       working-directory: ./terraform
       run: |
         echo "========================================="
-        echo "🚀 DÉPLOIEMENT TERRAFORM"
+        echo "📊 DÉTAILS DU PLAN TERRAFORM"
         echo "========================================="
-        terraform apply -auto-approve tfplan
-        echo "✅ Infrastructure déployée"
-    
-    - name: Terraform Output
-      working-directory: ./terraform
-      run: |
+        terraform show tfplan
+        echo ""
         echo "========================================="
-        echo "📊 INFORMATIONS DE DÉPLOIEMENT"
+        echo "ℹ️  NOTE: Le plan est créé mais PAS appliqué"
+        echo "   (Pas de déploiement réel dans ce TP)"
         echo "========================================="
-        terraform output
 
-  # JOB 5: Résumé final
+  # JOB 6: Résumé final
   deployment-summary:
-    name: Résumé du Déploiement
-    needs: [publish-image, terraform-apply]
+    name: Résumé du Pipeline
+    needs: [publish-image, terraform-show-plan]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     
@@ -177,21 +194,36 @@ jobs:
     - name: Afficher le résumé
       run: |
         echo "========================================="
-        echo "🎉 DÉPLOIEMENT COMPLET RÉUSSI"
+        echo "🎉 PIPELINE CI/CD COMPLET"
         echo "========================================="
         echo ""
-        echo "✅ Image Docker publiée"
-        echo "✅ Infrastructure Terraform déployée"
+        echo "✅ 1. Build & Test Docker - RÉUSSI"
+        echo "✅ 2. Publication Image - RÉUSSI"
+        echo "✅ 3. Validation Terraform - RÉUSSI"
+        echo "✅ 4. Plan Terraform - RÉUSSI"
         echo ""
-        echo "📦 Image: ghcr.io/${{ github.repository_owner }}/demo-devops:latest"
-        echo "🌐 Application accessible via Terraform"
+        echo "📦 Image Docker:"
+        echo "   ghcr.io/${{ github.repository_owner }}/demo-devops:latest"
+        echo ""
+        echo "🏗️  Infrastructure Terraform:"
+        echo "   Configuration validée et plan créé"
+        echo ""
+        echo "📥 Pour utiliser l'image localement:"
+        echo "   docker pull ghcr.io/${{ github.repository_owner }}/demo-devops:latest"
+        echo "   docker run -d -p 8080:80 ghcr.io/${{ github.repository_owner }}/demo-devops:latest"
+        echo ""
+        echo "🚀 Pour déployer avec Terraform (local):"
+        echo "   cd terraform"
+        echo "   terraform init"
+        echo "   terraform plan"
+        echo "   terraform apply"
         echo ""
         echo "========================================="
 
-  # JOB 6: Tests sur developpeur
+  # JOB 7: Tests sur developpeur
   dev-tests:
     name: Tests Developpeur
-    needs: build-and-test
+    needs: [build-and-test, terraform-validate]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/developpeur' && github.event_name == 'push'
     
@@ -200,5 +232,8 @@ jobs:
       run: |
         echo "========================================="
         echo "✅ TESTS RÉUSSIS SUR DEVELOPPEUR"
+        echo "✅ Docker: Build & Test OK"
+        echo "✅ Terraform: Validation OK"
+        echo ""
         echo "Prêt pour merge vers main"
         echo "========================================"
