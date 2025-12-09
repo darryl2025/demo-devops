@@ -1,7 +1,7 @@
 variable "docker_image" {
-  description = "Image Docker à déployer"
+  description = "Nom de l'image Docker"
   type        = string
-  default     = "ghcr.io/darryl2025/demo-devops:latest"
+  default     = "nginx:latest"
 }
 
 variable "container_port" {
@@ -11,7 +11,7 @@ variable "container_port" {
 }
 
 variable "host_port" {
-  description = "Port exposé sur la machine hôte"
+  description = "Port externe sur l'hôte"
   type        = number
   default     = 8080
 }
