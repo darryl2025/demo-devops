@@ -15,6 +15,17 @@ terraform {
   backend "local" {
     path = "terraform.tfstate"
   }
+
+  # Contourner le bug GPG du provider Docker
+  provider_installation {
+    filesystem_mirror {
+      path    = ".terraform/providers"
+      include = ["kreuzwerker/*"]
+    }
+    direct {
+      skip_signature_verification = true
+    }
+  }
 }
 
 ##############################################
