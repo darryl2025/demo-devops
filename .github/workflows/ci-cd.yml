@@ -1,4 +1,4 @@
-name: CI/CD - Image Docker
+name: CI/CD avec Docker et Terraform
 
 on:
   push:
@@ -15,8 +15,9 @@ permissions:
   packages: write
 
 jobs:
+  # JOB 1: Build et Test Docker
   build-and-test:
-    name: Build & Test
+    name: Build & Test Docker
     runs-on: ubuntu-latest
     
     steps:
@@ -26,25 +27,26 @@ jobs:
     - name: Informations
       run: |
         echo "========================================="
-        echo "🐳 CRÉATION IMAGE DOCKER"
+        echo "🐳 BUILD & TEST DOCKER"
         echo "Branche: ${{ github.ref_name }}"
         echo "========================================="
     
     - name: Build Docker image
       run: |
         docker build -t demo-devops:${{ github.ref_name }} .
-        echo "✅ Image créée!"
+        echo "✅ Image créée"
     
-    - name: Test de l'image
+    - name: Test du conteneur
       run: |
         docker run -d -p 8080:80 --name test demo-devops:${{ github.ref_name }}
         sleep 5
         curl -f http://localhost:8080
         docker stop test && docker rm test
-        echo "✅ Tests réussis!"
+        echo "✅ Tests réussis"
 
+  # JOB 2: Publier l'image Docker
   publish-image:
-    name: Publier l'image Docker
+    name: Publier Image Docker
     needs: build-and-test
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
@@ -62,29 +64,141 @@ jobs:
     
     - name: Build and Push
       run: |
-        echo "========================================="
-        echo "📤 PUBLICATION DE L'IMAGE"
-        echo "========================================="
-        
         IMAGE_NAME=ghcr.io/${{ github.repository_owner }}/demo-devops
-        
         docker build -t $IMAGE_NAME:latest .
         docker push $IMAGE_NAME:latest
-        
-        echo "✅ Image publiée!"
+        echo "✅ Image publiée sur GHCR"
+
+  # JOB 3: Terraform Plan
+  terraform-plan:
+    name: Terraform Plan
+    needs: publish-image
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     
-    - name: Instructions d'utilisation
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+    
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: 1.6.0
+    
+    - name: Terraform Init
+      working-directory: ./terraform
       run: |
         echo "========================================="
-        echo "🎉 IMAGE DOCKER DISPONIBLE"
+        echo "🔧 INITIALISATION TERRAFORM"
+        echo "========================================="
+        terraform init
+    
+    - name: Terraform Format Check
+      working-directory: ./terraform
+      run: |
+        echo "Vérification du formatage..."
+        terraform fmt -check || echo "⚠️  Fichiers non formatés"
+    
+    - name: Terraform Validate
+      working-directory: ./terraform
+      run: |
+        echo "Validation de la configuration..."
+        terraform validate
+        echo "✅ Configuration valide"
+    
+    - name: Terraform Plan
+      working-directory: ./terraform
+      run: |
+        echo "========================================="
+        echo "📋 PLAN TERRAFORM"
+        echo "========================================="
+        terraform plan -out=tfplan
+        echo "✅ Plan créé"
+    
+    - name: Upload Plan
+      uses: actions/upload-artifact@v3
+      with:
+        name: terraform-plan
+        path: terraform/tfplan
+
+  # JOB 4: Terraform Apply (déploiement)
+  terraform-apply:
+    name: Terraform Apply
+    needs: terraform-plan
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment:
+      name: production
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+    
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: 1.6.0
+    
+    - name: Terraform Init
+      working-directory: ./terraform
+      run: terraform init
+    
+    - name: Download Plan
+      uses: actions/download-artifact@v3
+      with:
+        name: terraform-plan
+        path: terraform/
+    
+    - name: Terraform Apply
+      working-directory: ./terraform
+      run: |
+        echo "========================================="
+        echo "🚀 DÉPLOIEMENT TERRAFORM"
+        echo "========================================="
+        terraform apply -auto-approve tfplan
+        echo "✅ Infrastructure déployée"
+    
+    - name: Terraform Output
+      working-directory: ./terraform
+      run: |
+        echo "========================================="
+        echo "📊 INFORMATIONS DE DÉPLOIEMENT"
+        echo "========================================="
+        terraform output
+
+  # JOB 5: Résumé final
+  deployment-summary:
+    name: Résumé du Déploiement
+    needs: [publish-image, terraform-apply]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+    - name: Afficher le résumé
+      run: |
+        echo "========================================="
+        echo "🎉 DÉPLOIEMENT COMPLET RÉUSSI"
         echo "========================================="
         echo ""
-        echo "📥 Pour télécharger dans Docker Desktop:"
-        echo "   docker pull ghcr.io/${{ github.repository_owner }}/demo-devops:latest"
+        echo "✅ Image Docker publiée"
+        echo "✅ Infrastructure Terraform déployée"
         echo ""
-        echo "🚀 Pour lancer le site:"
-        echo "   docker run -d -p 8080:80 ghcr.io/${{ github.repository_owner }}/demo-devops:latest"
+        echo "📦 Image: ghcr.io/${{ github.repository_owner }}/demo-devops:latest"
+        echo "🌐 Application accessible via Terraform"
         echo ""
-        echo "🌐 Puis ouvrir: http://localhost:8080"
         echo "========================================="
-        
+
+  # JOB 6: Tests sur developpeur
+  dev-tests:
+    name: Tests Developpeur
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/developpeur' && github.event_name == 'push'
+    
+    steps:
+    - name: Notification
+      run: |
+        echo "========================================="
+        echo "✅ TESTS RÉUSSIS SUR DEVELOPPEUR"
+        echo "Prêt pour merge vers main"
+        echo "========================================"
